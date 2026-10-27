@@ -31,56 +31,7 @@ float4 fragMain(FragShaderInput input) : SV_Target {
   return float4(input.fragColor, .5 - length(coord));
 }
 
-// Matches host side particle struct
-struct Particle {
-  float2 position;
-  float2 velocity;
-  float4 color;
-};
-
-struct UniformBuffer {
-  float deltaTime;
-};
-// Constant buffers are faster than structured buffers, and available to
-// more pipeline stages, but smaller (64k-ish).
-ConstantBuffer<UniformBuffer> ubo;
-
-struct ParticleSSBO {
-  Particle particles;
-};
-
-// StructuredBuffer is a read-only buffer which cannot be bound to as vertex
-// buffers. See HLSL
-StructuredBuffer<ParticleSSBO> particlesIn;
-// RWStructuredBuffer can be read and written. See HLSL
-RWStructuredBuffer<ParticleSSBO> particlesOut;
-
-
-// Maps to a SPIRV specialization constant
-// Defaults to 256 work-items in work-group
-[SpecializationConstant] const uint xThreads = 256;
-
-// 1D compute kernel
-[shader("compute")][numthreads(xThreads, 1, 1)]
-void compMain(uint3 threadId : SV_DispatchThreadID) {
-  uint index = threadId.x;
-
-  // Update position based on previous position and speed
-  particlesOut[index].particles.position =
-      particlesIn[index].particles.position +
-      particlesIn[index].particles.velocity.xy * ubo.deltaTime;
-  particlesOut[index].particles.velocity =
-      particlesIn[index].particles.velocity;
-
-  // Flip movement at window border
-  if ((particlesOut[index].particles.position.x <= -1.0) ||
-      (particlesOut[index].particles.position.x >= 1.0)) {
-    particlesOut[index].particles.velocity.x =
-        -particlesOut[index].particles.velocity.x;
-  }
-  if ((particlesOut[index].particles.position.y <= -1.0) ||
-      (particlesOut[index].particles.position.y >= 1.0)) {
-    particlesOut[index].particles.velocity.y =
-        -particlesOut[index].particles.velocity.y;
-  }
-}
+// NOTE: The particle simulation that used to be the `compMain` compute shader
+// here is now a SYCL kernel, see `src/compute.cpp`. The particle buffer it
+// writes is shared with this shader as a vertex buffer through Vulkan
+// external memory.

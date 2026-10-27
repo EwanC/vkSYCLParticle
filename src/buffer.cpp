@@ -1,160 +1,134 @@
 // Copyright (c) 2025-2026 Ewan Crawford
 
 #include "common.hpp"
-#include <algorithm>
-#include <chrono>
-#include <cstring>
-#include <glm/gtc/matrix_transform.hpp>
+#include <cmath>
 #include <random>
 #include <stdexcept>
-
-void vkParticle::updateUniformBuffer(uint32_t currentImage) {
-  // Update uniform buffer with a new time delta.
-  UniformBufferObject ubo{};
-  // `MLastFrameTime` set on each iteration of vkParticle::mainLoop()
-  ubo.deltaTime = static_cast<float>(MLastFrameTime) * 2.f;
-  memcpy(MUniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
-}
+#include <unistd.h>
 
 namespace {
-uint32_t findMemoryType(vk::raii::PhysicalDevice &physicalDevice,
-                        uint32_t typeFilter,
-                        vk::MemoryPropertyFlags properties) {
-  vk::PhysicalDeviceMemoryProperties memProperties =
-      physicalDevice.getMemoryProperties();
-
-  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-    if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags &
-                                    properties) == properties) {
-      return i;
-    }
-  }
-
-  throw std::runtime_error("failed to find suitable memory type!");
-}
-
-void createBuffer(vk::raii::Device &device,
-                  vk::raii::PhysicalDevice &physicalDevice, vk::DeviceSize size,
-                  vk::BufferUsageFlags usage,
-                  vk::MemoryPropertyFlags properties, vk::raii::Buffer &buffer,
-                  vk::raii::DeviceMemory &bufferMemory) {
-  vk::BufferCreateInfo bufferInfo{
-      .size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
-  buffer = vk::raii::Buffer(device, bufferInfo);
-  vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
-  vk::MemoryAllocateInfo allocInfo{
-      .allocationSize = memRequirements.size,
-      .memoryTypeIndex = findMemoryType(
-          physicalDevice, memRequirements.memoryTypeBits, properties)};
-  bufferMemory = vk::raii::DeviceMemory(device, allocInfo);
-  buffer.bindMemory(bufferMemory, 0);
-}
-} // namespace
-
-void vkParticle::copyBuffer(vk::raii::Buffer &srcBuffer,
-                            vk::raii::Buffer &dstBuffer, vk::DeviceSize size) {
-
-  // Create a single-submit command-buffer containing a single copy command
-  // for the full size of the src/dst buffers
-  vk::CommandBufferAllocateInfo allocInfo{.commandPool = MCommandPool,
-                                          .level =
-                                              vk::CommandBufferLevel::ePrimary,
-                                          .commandBufferCount = 1};
-  vk::raii::CommandBuffer commandCopyBuffer =
-      std::move(MDevice.allocateCommandBuffers(allocInfo).front());
-  commandCopyBuffer.begin(vk::CommandBufferBeginInfo{
-      .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-  commandCopyBuffer.copyBuffer(*srcBuffer, *dstBuffer,
-                               vk::BufferCopy(0, 0, size));
-  commandCopyBuffer.end();
-  MQueue.submit(vk::SubmitInfo{.commandBufferCount = 1,
-                               .pCommandBuffers = &*commandCopyBuffer},
-                nullptr);
-  MQueue.waitIdle();
-}
-
-void vkParticle::createShaderStorageBuffers() {
+/// @brief Creates the initial state of the particle system.
+/// @param[in] count Number of particles to create.
+/// @param[in] aspectRatio Height over width of the window.
+std::vector<Particle> createParticles(uint32_t count, float aspectRatio) {
   // Setup random distribution to use for particle initial locations
   std::default_random_engine rndEngine(static_cast<unsigned>(time(nullptr)));
   std::uniform_real_distribution rndDist(0.0f, 1.0f);
 
-  // Initialize host memory with particle instances
-  constexpr uint32_t ParticleCount = SComputeWorkItems * SComputeWorkGroups;
-  std::vector<Particle> particles(ParticleCount);
+  std::vector<Particle> particles(count);
   for (auto &particle : particles) {
     // Initial particle positions on a circle
     float r = 0.25f * sqrtf(rndDist(rndEngine));
     float theta = rndDist(rndEngine) * 2.0f * 3.14159265358979323846f;
-    float x = r * cosf(theta) * SWindowHeight / SWindowWidth;
+    float x = r * cosf(theta) * aspectRatio;
     float y = r * sinf(theta);
     particle.position = glm::vec2(x, y);
     particle.velocity = normalize(glm::vec2(x, y)) * 0.00025f;
     particle.color = glm::vec4(rndDist(rndEngine), rndDist(rndEngine),
                                rndDist(rndEngine), 1.0f);
   }
+  return particles;
+}
 
-  // Memory required for a buffer of all particles
-  vk::DeviceSize bufferSize = sizeof(Particle) * ParticleCount;
+/// @brief Owner of a file descriptor, so that it is closed if importing it
+/// fails. Vulkan takes ownership of the descriptor once imported successfully,
+/// at which point ownership here is dropped with `release()`.
+class FileDescriptor {
+public:
+  explicit FileDescriptor(int fd) : MFd(fd) {}
+  FileDescriptor(const FileDescriptor &) = delete;
+  FileDescriptor &operator=(const FileDescriptor &) = delete;
+  ~FileDescriptor() {
+    if (MFd >= 0) {
+      close(MFd);
+    }
+  }
 
-  // Create a host-visible staging buffer used to upload data to the gpu
-  vk::raii::Buffer stagingBuffer({});
-  vk::raii::DeviceMemory stagingBufferMemory({});
-  createBuffer(MDevice, MPhysicalDevice, bufferSize,
-               vk::BufferUsageFlagBits::eTransferSrc,
-               vk::MemoryPropertyFlagBits::eHostVisible |
-                   vk::MemoryPropertyFlagBits::eHostCoherent,
-               stagingBuffer, stagingBufferMemory);
+  int get() const { return MFd; }
+  void release() { MFd = -1; }
 
-  // Map staging buffer buffer, and copy host std::vector data into it.
-  void *dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
-  memcpy(dataStaging, particles.data(), (size_t)bufferSize);
-  stagingBufferMemory.unmapMemory();
+private:
+  int MFd;
+};
+} // anonymous namespace
+
+void vkParticle::createShaderStorageBuffers() {
+  assert(MSyclQueue.has_value());
+
+  const std::vector<Particle> particles = createParticles(
+      SParticleCount, static_cast<float>(SWindowHeight) / SWindowWidth);
+  const vk::DeviceSize bufferSize = sizeof(Particle) * SParticleCount;
 
   MShaderStorageBuffers.clear();
   MShaderStorageBuffersMemory.clear();
 
-  // Use single-shot command-buffer to copy initial particle data from
-  // temporary buffers to shader storage buffers.
-  // SSBs have usage flag bits set for all of storage, vertex, and transfer,
-  // so that they can be used in vertex shader and compute shader, and
-  // data transferred from host to GPU (for UBO with delta time).
   for (size_t i = 0; i < SMaxFramesInFlight; i++) {
-    vk::raii::Buffer shaderStorageBufferTemp({});
-    vk::raii::DeviceMemory shaderStorageBufferTempMemory({});
-    createBuffer(MDevice, MPhysicalDevice, bufferSize,
-                 vk::BufferUsageFlagBits::eStorageBuffer |
-                     vk::BufferUsageFlagBits::eVertexBuffer |
-                     vk::BufferUsageFlagBits::eTransferDst,
-                 vk::MemoryPropertyFlagBits::eDeviceLocal, // GPU resident
-                 shaderStorageBufferTemp, shaderStorageBufferTempMemory);
-    copyBuffer(stagingBuffer, shaderStorageBufferTemp, bufferSize);
-    MShaderStorageBuffers.emplace_back(std::move(shaderStorageBufferTemp));
-    MShaderStorageBuffersMemory.emplace_back(
-        std::move(shaderStorageBufferTempMemory));
-  }
-}
+    // Allocate the particles of this frame as device USM AdaptiveCpp is able
+    // to export, and upload the initial state to it. Every frame reads the
+    // particles of the previous frame, so all of them are initialized.
+    MParticles[i] = sycl::malloc_device<Particle>(
+        SParticleCount, *MSyclDevice, *MSyclContext,
+        sycl::property_list{sycl::property::usm::AdaptiveCpp_exportable{}});
+    if (!MParticles[i]) {
+      throw std::runtime_error("failed to allocate particles as device USM!");
+    }
+    MSyclQueue->memcpy(MParticles[i], particles.data(), bufferSize).wait();
 
-void vkParticle::createUniformBuffers() {
-  MUniformBuffers.clear();
-  MUniformBuffersMemory.clear();
-  MUniformBuffersMapped.clear();
+    // Export the device memory backing the allocation, so that a buffer of
+    // the VkDevice of this application can be bound to it. The file
+    // descriptor returned is consumed by a successful import below.
+    auto exported =
+        sycl::vk_interop::export_memory(MParticles[i], *MSyclContext);
+    if (exported.fd < 0) {
+      throw std::runtime_error("failed to export the SYCL particle memory!");
+    }
+    FileDescriptor fd{exported.fd};
 
-  // Each frame has a host visible/coherent uniform buffer
-  // that is persistently mapped. This is used to pass in the
-  // new time value to the compute shader, rather than passing
-  // this through the vertex buffer and updating that every frame.
-  for (size_t i = 0; i < SMaxFramesInFlight; i++) {
-    vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
-    vk::raii::Buffer buffer({});
-    vk::raii::DeviceMemory bufferMem({});
-    createBuffer(MDevice, MPhysicalDevice, bufferSize,
-                 vk::BufferUsageFlagBits::eUniformBuffer,
-                 vk::MemoryPropertyFlagBits::eHostVisible |
-                     vk::MemoryPropertyFlagBits::eHostCoherent,
-                 buffer, bufferMem);
-    MUniformBuffers.emplace_back(std::move(buffer));
-    MUniformBuffersMemory.emplace_back(std::move(bufferMem));
-    MUniformBuffersMapped.emplace_back(
-        MUniformBuffersMemory[i].mapMemory(0, bufferSize));
+    // The buffer is created with the usage this application needs, which is
+    // what makes sharing through external memory preferable to sharing the
+    // VkBuffer itself: AdaptiveCpp creates its own buffer with only transfer
+    // and device address usage, and that does not constrain the buffer here.
+    vk::ExternalMemoryBufferCreateInfo externalBufferInfo{
+        .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd};
+    vk::BufferCreateInfo bufferInfo{.pNext = &externalBufferInfo,
+                                    .size = bufferSize,
+                                    .usage =
+                                        vk::BufferUsageFlagBits::eVertexBuffer,
+                                    .sharingMode = vk::SharingMode::eExclusive};
+    vk::raii::Buffer buffer(MDevice, bufferInfo);
+
+    // The memory type of the allocation is only meaningful on the physical
+    // device it was made on, which is also the one this application uses, but
+    // the buffer created here may have stricter requirements than the buffer
+    // AdaptiveCpp created for the same memory.
+    const vk::MemoryRequirements memRequirements =
+        buffer.getMemoryRequirements();
+    if (!(memRequirements.memoryTypeBits &
+          (1u << exported.memory_type_index))) {
+      throw std::runtime_error(
+          "the exported SYCL memory is of a type that cannot back a vertex "
+          "buffer!");
+    }
+    if (memRequirements.size > exported.allocation_size) {
+      throw std::runtime_error("the exported SYCL memory is too small!");
+    }
+
+    vk::ImportMemoryFdInfoKHR importInfo{
+        .handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd,
+        .fd = fd.get()};
+    vk::MemoryAllocateInfo allocInfo{.pNext = &importInfo,
+                                     .allocationSize = exported.allocation_size,
+                                     .memoryTypeIndex =
+                                         exported.memory_type_index};
+    vk::raii::DeviceMemory memory(MDevice, allocInfo);
+    fd.release();
+
+    // An exportable allocation owns the whole of its VkDeviceMemory, which
+    // AdaptiveCpp binds its own buffer to at offset zero.
+    assert(exported.offset == 0);
+    buffer.bindMemory(memory, exported.offset);
+
+    MShaderStorageBuffers.emplace_back(std::move(buffer));
+    MShaderStorageBuffersMemory.emplace_back(std::move(memory));
   }
 }

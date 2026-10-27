@@ -23,17 +23,6 @@ void vkParticle::createGraphicsCommandBuffers() {
   MGraphicsCommandBuffers = vk::raii::CommandBuffers(MDevice, allocInfo);
 }
 
-void vkParticle::createComputeCommandBuffers() {
-  MComputeCommandBuffers.clear();
-  // Use primary command-buffers, as they are submitted directly to a queue,
-  // rather than indirectly from other command-buffers.
-  vk::CommandBufferAllocateInfo allocInfo{
-      .commandPool = MCommandPool,
-      .level = vk::CommandBufferLevel::ePrimary,
-      .commandBufferCount = SMaxFramesInFlight};
-  MComputeCommandBuffers = vk::raii::CommandBuffers(MDevice, allocInfo);
-}
-
 namespace {
 // Transitions an image to an appropriate layout for future command-buffer
 // commands.
@@ -67,6 +56,34 @@ void transitionImageLayout(vk::raii::CommandBuffer &commandBuffer,
   // vkCmdPipelineBarrier2 Insert a memory dependency between commands defined
   // before and after
   commandBuffer.pipelineBarrier2(dependency_info);
+}
+// Transfers ownership of a buffer backed by memory shared with another
+// Vulkan device between that device and the queue family of this one.
+//
+// Buffers are created with `VK_SHARING_MODE_EXCLUSIVE`, so ownership has to be
+// transferred explicitly to make writes of the releasing device visible. Both
+// devices use `VK_QUEUE_FAMILY_EXTERNAL` for the other side, as the queue
+// family indices of a foreign device are not meaningful here.
+void transferBufferOwnership(vk::raii::CommandBuffer &commandBuffer,
+                             vk::Buffer buffer, uint32_t srcQueueFamilyIndex,
+                             uint32_t dstQueueFamilyIndex,
+                             vk::AccessFlags2 srcAccessMask,
+                             vk::AccessFlags2 dstAccessMask,
+                             vk::PipelineStageFlags2 srcStageMask,
+                             vk::PipelineStageFlags2 dstStageMask) {
+  vk::BufferMemoryBarrier2 barrier = {
+      .srcStageMask = srcStageMask,
+      .srcAccessMask = srcAccessMask,
+      .dstStageMask = dstStageMask,
+      .dstAccessMask = dstAccessMask,
+      .srcQueueFamilyIndex = srcQueueFamilyIndex,
+      .dstQueueFamilyIndex = dstQueueFamilyIndex,
+      .buffer = buffer,
+      .offset = 0,
+      .size = vk::WholeSize};
+  vk::DependencyInfo dependencyInfo = {.bufferMemoryBarrierCount = 1,
+                                       .pBufferMemoryBarriers = &barrier};
+  commandBuffer.pipelineBarrier2(dependencyInfo);
 }
 } // anonymous namespace
 
@@ -106,6 +123,18 @@ void vkParticle::recordGraphicsCommandBuffer(uint32_t imageIndex) {
       .layerCount = 1, // number of layers to render to
       .colorAttachmentCount = 1,
       .pColorAttachments = &attachmentInfo};
+  // Acquire the particle buffer from the device of the SYCL context, which
+  // has just written it. Semaphores alone are not enough to make those writes
+  // visible here, as the buffer is owned exclusively.
+  transferBufferOwnership(
+      MGraphicsCommandBuffers[MCurrentFrame],
+      MShaderStorageBuffers[MCurrentFrame], vk::QueueFamilyExternal,
+      MQueueIndex, {},                           // srcAccessMask (acquire)
+      vk::AccessFlagBits2::eVertexAttributeRead, // dstAccessMask
+      vk::PipelineStageFlagBits2::eTopOfPipe,    // srcStage
+      vk::PipelineStageFlagBits2::eVertexAttributeInput // dstStage
+  );
+
   MGraphicsCommandBuffers[MCurrentFrame].beginRendering(renderingInfo);
 
   // Bind command-buffer to graphics pipeline
@@ -125,11 +154,23 @@ void vkParticle::recordGraphicsCommandBuffer(uint32_t imageIndex) {
 
   // Draw each of our particles, without using an index buffer as we're using
   // dots for vertices rather than triangles
-  constexpr uint32_t ParticleCount = SComputeWorkItems * SComputeWorkGroups;
-  MGraphicsCommandBuffers[MCurrentFrame].draw(ParticleCount, 1,
+  MGraphicsCommandBuffers[MCurrentFrame].draw(SParticleCount, 1,
                                               0 /* offset into SV_VertexId*/,
                                               0 /* offset into SV_InstanceID*/);
   MGraphicsCommandBuffers[MCurrentFrame].endRendering();
+
+  // Release the particle buffer back to the device of the SYCL context, which
+  // will overwrite it once the semaphore signalled by this submission
+  // reaches the value recorded for this frame.
+  transferBufferOwnership(
+      MGraphicsCommandBuffers[MCurrentFrame],
+      MShaderStorageBuffers[MCurrentFrame], MQueueIndex,
+      vk::QueueFamilyExternal,
+      vk::AccessFlagBits2::eVertexAttributeRead, // srcAccessMask
+      {},                                        // dstAccessMask (release)
+      vk::PipelineStageFlagBits2::eVertexAttributeInput, // srcStage
+      vk::PipelineStageFlagBits2::eBottomOfPipe          // dstStage
+  );
 
   // After rendering, transition the swapchain image to present src layout
   transitionImageLayout(
@@ -144,22 +185,4 @@ void vkParticle::recordGraphicsCommandBuffer(uint32_t imageIndex) {
       vk::PipelineStageFlagBits2::eBottomOfPipe // dstStage
   );
   MGraphicsCommandBuffers[MCurrentFrame].end();
-}
-
-void vkParticle::recordComputeCommandBuffer() {
-  MComputeCommandBuffers[MCurrentFrame].reset();
-  // Don't need to set one-time-submit, simultanteous-ues, or render-pass flags
-  MComputeCommandBuffers[MCurrentFrame].begin({});
-  // Bind command-buffer to compute pipeline
-  MComputeCommandBuffers[MCurrentFrame].bindPipeline(
-      vk::PipelineBindPoint::eCompute, MComputePipeline);
-  // Bind to descriptor sets used by compute shader
-  MComputeCommandBuffers[MCurrentFrame].bindDescriptorSets(
-      vk::PipelineBindPoint::eCompute, MComputePipelineLayout, 0,
-      {MComputeDescriptorSets[MCurrentFrame]}, {});
-  // The 1D compute shader uses SCopmuteWorkItems work-group dispatch, set via
-  // specialization constants. So total number of invocations at the moment
-  // is "SComputeWorkGroups * SComputeWorkItems"
-  MComputeCommandBuffers[MCurrentFrame].dispatch(SComputeWorkGroups, 1, 1);
-  MComputeCommandBuffers[MCurrentFrame].end();
 }

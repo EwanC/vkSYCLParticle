@@ -16,69 +16,63 @@ void vkParticle::drawFrame() {
   // Reset fence back to unsignalled state after it has been signalled.
   MDevice.resetFences(*MInFlightFences[MCurrentFrame]);
 
-  // Update timeline value for this frame such that the graphics pipeline
-  // waits on the compute pipeline to finish, rather than being async.
-  uint64_t computeWaitValue = MTimelineValue;
-  uint64_t computeSignalValue = ++MTimelineValue;
-  uint64_t graphicsWaitValue = computeSignalValue;
-  uint64_t graphicsSignalValue = ++MTimelineValue;
+  // Submit the particle simulation to the SYCL queue, which runs on its own
+  // VkDevice, writing the particles of this frame into memory shared with the
+  // vertex buffer of this frame.
+  const sycl::event computeEvent =
+      updateParticles(static_cast<float>(MLastFrameTime));
 
-  // Update uniform buffer with delta time
-  updateUniformBuffer(MCurrentFrame);
+  // Import the timeline semaphore the SYCL queue signals on completion, so
+  // that the graphics work below can wait on it on the device.
+  //
+  // NOTE: querying the native event forces AdaptiveCpp to submit the work, so
+  // this must happen before the graphics submission waits on it.
+  const vk::Semaphore computeSemaphore = importSyclSemaphore(computeEvent);
+  const uint64_t computeSignalValue =
+      sycl::get_native<sycl::backend::vk>(computeEvent).value;
 
-  // Submit compute work to device
-  {
-    // Setup compute command-buffer with commands.
-    recordComputeCommandBuffer();
+  // Value this application's timeline reaches once the graphics work below
+  // has completed, which is what the SYCL kernel of a later frame waits on
+  // before overwriting the particles read here.
+  const uint64_t graphicsSignalValue = ++MTimelineValue;
 
-    // Set timeline semaphore values
-    vk::TimelineSemaphoreSubmitInfo computeTimelineInfo{
-        .waitSemaphoreValueCount = 1,
-        .pWaitSemaphoreValues = &computeWaitValue,
-        .signalSemaphoreValueCount = 1,
-        .pSignalSemaphoreValues = &computeSignalValue};
-
-    // Which stage of the pipeline to wait on for semaphores
-    vk::PipelineStageFlags waitStages[] = {
-        vk::PipelineStageFlagBits::eComputeShader};
-    // Submit command-buffer to queue
-    vk::SubmitInfo computeSubmitInfo{
-        .pNext = &computeTimelineInfo,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &*MSemaphore,
-        .pWaitDstStageMask = waitStages,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &*MComputeCommandBuffers[MCurrentFrame],
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &*MSemaphore};
-    MQueue.submit(computeSubmitInfo, nullptr);
-  }
   // Submit graphics work to device
   {
-    // Setup compute command-buffer with commands.
+    // Setup graphics command-buffer with commands.
     recordGraphicsCommandBuffer(imageIndex);
 
-    // Submit graphics work, waits for compute to finish.
-    vk::TimelineSemaphoreSubmitInfo graphicsTimelineInfo{
-        .waitSemaphoreValueCount = 1,
-        .pWaitSemaphoreValues = &graphicsWaitValue,
-        .signalSemaphoreValueCount = 1,
-        .pSignalSemaphoreValues = &graphicsSignalValue};
+    // Waits on the timeline of the SYCL context, signals the timeline of this
+    // application. The two semaphores are distinct, so unlike a single
+    // timeline the wait and signal values are unrelated.
+    const std::array waitSemaphores{computeSemaphore};
+    const std::array waitValues{computeSignalValue};
+    const std::array signalSemaphores{*MSemaphore};
+    const std::array signalValues{graphicsSignalValue};
 
-    // Wait at vertex input stage for compute to finish
+    vk::TimelineSemaphoreSubmitInfo graphicsTimelineInfo{
+        .waitSemaphoreValueCount = waitValues.size(),
+        .pWaitSemaphoreValues = waitValues.data(),
+        .signalSemaphoreValueCount = signalValues.size(),
+        .pSignalSemaphoreValues = signalValues.data()};
+
+    // Wait at vertex input stage for the SYCL kernel to finish
     vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eVertexInput;
 
     // Submit command-buffer to queue
     vk::SubmitInfo graphicsSubmitInfo{
         .pNext = &graphicsTimelineInfo,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &*MSemaphore,
+        .waitSemaphoreCount = waitSemaphores.size(),
+        .pWaitSemaphores = waitSemaphores.data(),
         .pWaitDstStageMask = &waitStage,
         .commandBufferCount = 1,
         .pCommandBuffers = &*MGraphicsCommandBuffers[MCurrentFrame],
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &*MSemaphore};
+        .signalSemaphoreCount = signalSemaphores.size(),
+        .pSignalSemaphores = signalSemaphores.data()};
     MQueue.submit(graphicsSubmitInfo, nullptr);
+
+    // Record that the particles of this frame may not be overwritten by SYCL
+    // until the graphics work just submitted has completed.
+    MFrameGraphicsValue[MCurrentFrame] = graphicsSignalValue;
 
     // Present the image (wait for graphics to finish)
     vk::SemaphoreWaitInfo waitInfo{.semaphoreCount = 1,

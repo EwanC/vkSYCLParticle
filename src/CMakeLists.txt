@@ -10,6 +10,7 @@ set(VK_PARTICLE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pipeline.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/draw.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/buffer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/descriptors.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/compute.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/interop.cpp
     PARENT_SCOPE
 )

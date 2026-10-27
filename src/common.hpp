@@ -2,11 +2,24 @@
 
 #pragma once
 
-import vulkan_hpp;
+#include <vulkan/vulkan_raii.hpp>
+
 #define GLFW_INCLUDE_VULKAN // REQUIRED only for GLFW CreateWindowSurface.
 #include <GLFW/glfw3.h>
 
+// Included after the Vulkan headers so that AdaptiveCpp enables its Vulkan
+// backend interop API, which it only does when the Vulkan headers are
+// reachable. `ACPP_GLUE_VK_INTEROP_AVAILABLE` is defined by it in that case.
+#include <sycl/sycl.hpp>
+
+#if !defined(ACPP_GLUE_VK_INTEROP_AVAILABLE)
+#error "AdaptiveCpp was built without the Vulkan backend, or its Vulkan "\
+       "interop API is unavailable. The Vulkan backend is required."
+#endif
+
 #include <array>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,11 +47,6 @@ struct Particle {
         vk::VertexInputAttributeDescription(
             1, 0, vk::Format::eR32G32B32A32Sfloat, offsetof(Particle, color))};
   }
-};
-
-/// @brief uniform buffer used in compute shader
-struct UniformBufferObject {
-  float deltaTime = 1.0f;
 };
 
 /// @brief Class holding RAII state of the application
@@ -70,7 +78,14 @@ private:
   /// @brief Creates a VkSurfaceKHR window surface to interface with GLFW.
   void createSurface();
   /// @brief Selects a VkPhysicalDevice to use from the VK instance based on
-  /// the application requirements.
+  /// the application requirements, and the SYCL device of the AdaptiveCpp
+  /// Vulkan backend that refers to the same physical device.
+  ///
+  /// Both are needed because AdaptiveCpp creates its own VkInstance and
+  /// VkDevice, so the handles are not comparable between the two instances.
+  /// Sharing memory through opaque file descriptors requires that the two
+  /// logical devices originate from the same physical device, which is
+  /// established by matching `VkPhysicalDeviceIDProperties::deviceUUID`.
   void pickPhysicalDevice();
   /// @brief Creates a logical device and queue with required capabilities.
   void createLogicalDevice();
@@ -78,42 +93,33 @@ private:
   void createSwapChain();
   /// @brief Creates a view into each image in the swap chain.
   void createImageViews();
-  /// @brief Defines descriptor set layout for compute shader of a uniform
-  /// buffer and 2 storage buffers.
-  void createComputeDescriptorSetLayout();
+  /// @brief Creates the SYCL context and queue used for the compute work, on
+  /// the SYCL device selected by pickPhysicalDevice().
+  void createSyclQueue();
   /// @brief Loads vertex & fragment shaders,
   /// and creates graphics pipeline.
   void createGraphicsPipeline();
-  /// @brief Loads compute shader, and creates compute pipeline.
-  void createComputePipeline();
   /// @brief Creates a command pool.
   void createCommandPool();
-  /// @brief Creates buffer for every frame of `Particle` objects copied to
-  /// GPU-only memory from host-visible staging memory.
+  /// @brief Allocates the `Particle` buffer of every frame as exportable SYCL
+  /// device USM, imports the backing device memory into the VkDevice of this
+  /// application, and binds a vertex buffer to it.
   void createShaderStorageBuffers();
-  /// @brief Creates a persistently mapped uniformed buffer for every frame.
-  void createUniformBuffers();
-  /// @brief Defines descriptor pool for creating uniform and storage buffer
-  /// descriptors from
-  void createDescriptorPool();
-  /// @brief For every frame, writes a descriptor set of a uniform buffer with
-  /// the new time delta, as well as 2 storage buffers for the last and
-  /// current frame particle position.
-  void createComputeDescriptorSets();
   /// @brief Creates a command-buffer to use for graphics commands for each of
   /// the possible frames in flight.
   void createGraphicsCommandBuffers();
-  /// @brief Creates a command-buffer to use for compute commands for each of
-  /// the possible frames in flight.
-  void createComputeCommandBuffers();
-  /// @brief Creates timeline semaphore and fences for synchronization.
+  /// @brief Creates timeline semaphore and fences for synchronization, and
+  /// shares the timeline semaphore with the SYCL context.
   void createSyncObjects();
 
   /// @brief Add commands to graphics command-buffer
   /// @param[in] imageIndex Index in swap chain of current image for frame.
   void recordGraphicsCommandBuffer(uint32_t imageIndex);
-  /// @brief Add commands to compute command-buffer
-  void recordComputeCommandBuffer();
+  /// @brief Submits the SYCL kernel updating the particles of the current
+  /// frame from those of the previous frame.
+  /// @param[in] deltaTime Time elapsed since the last frame.
+  /// @returns Event of the submitted kernel.
+  [[nodiscard]] sycl::event updateParticles(float deltaTime);
   /// @brief Submits the command-buffers to the queue,
   /// and presents the new frame.
   void drawFrame();
@@ -121,15 +127,39 @@ private:
   void recreateSwapChain();
   /// @brief Resets swap chain state.
   void cleanupSwapChain();
-  /// @brief Adds a copy buffer command to a newly created one time submit
-  /// command-buffer, and submits it to the queue with a blocking host wait.
-  /// @param[in] srcBuffer Buffer to copy from.
-  /// @param[in] dstBuffer Buffer to copy to.
-  /// @param[in] Size Number of bytes to copy.
-  void copyBuffer(vk::raii::Buffer &srcBuffer, vk::raii::Buffer &dstBuffer,
-                  vk::DeviceSize size);
-  /// @brief Sets the uniform buffer object data to the latest time delta.
-  void updateUniformBuffer(uint32_t currentImage);
+  /// @brief Imports a timeline semaphore of the SYCL context into the
+  /// VkDevice of this application, so that the graphics queue can wait on the
+  /// completion of SYCL work.
+  ///
+  /// The import is permanent and the result is cached, since an opaque file
+  /// descriptor may only be imported once. AdaptiveCpp may use more than one
+  /// timeline, so the semaphore the SYCL event refers to is re-imported if it
+  /// differs from the cached one.
+  /// @param[in] event Event whose semaphore should be imported.
+  /// @returns Semaphore of this application sharing the SYCL timeline.
+  vk::Semaphore importSyclSemaphore(const sycl::event &event);
+
+  /*
+   * Static member variables
+   */
+  static const uint32_t SWindowWidth = 800;
+  static const uint32_t SWindowHeight = 600;
+  static const unsigned SMaxFramesInFlight = 2;
+  static const uint64_t SFenceTimeout = 100000000;
+  /// Number of work-items in a work-group of the SYCL particle update kernel.
+  static constexpr uint32_t SComputeWorkItems = 16;
+  /// Number of work-groups of the SYCL particle update kernel.
+  static constexpr uint32_t SComputeWorkGroups = 32;
+  /// Total number of particles simulated and drawn.
+  static constexpr uint32_t SParticleCount =
+      SComputeWorkItems * SComputeWorkGroups;
+  static constexpr bool SEnableValidationLayers =
+#ifdef NDEBUG
+      false;
+#else
+      true;
+#endif
+  static const std::vector<const char *> SValidationLayers;
 
   /*
    * Member variables
@@ -151,29 +181,51 @@ private:
   std::vector<vk::raii::ImageView> MSwapChainImageViews;
 
   vk::raii::PipelineLayout MPipelineLayout = nullptr;
-  vk::raii::PipelineLayout MComputePipelineLayout = nullptr;
   vk::raii::Pipeline MGraphicsPipeline = nullptr;
-  vk::raii::Pipeline MComputePipeline = nullptr;
 
-  vk::raii::DescriptorSetLayout MComputeDescriptorSetLayout = nullptr;
-  vk::raii::DescriptorPool MDescriptorPool = nullptr;
-  std::vector<vk::raii::DescriptorSet> MComputeDescriptorSets;
-
+  // Vertex buffers bound to the device memory imported from the SYCL USM
+  // allocations in `MParticles`, one for each frame in flight.
   std::vector<vk::raii::Buffer> MShaderStorageBuffers;
   std::vector<vk::raii::DeviceMemory> MShaderStorageBuffersMemory;
 
-  std::vector<vk::raii::Buffer> MUniformBuffers;
-  std::vector<vk::raii::DeviceMemory> MUniformBuffersMemory;
-  std::vector<void *> MUniformBuffersMapped;
-
   vk::raii::CommandPool MCommandPool = nullptr;
   std::vector<vk::raii::CommandBuffer> MGraphicsCommandBuffers;
-  std::vector<vk::raii::CommandBuffer> MComputeCommandBuffers;
 
+  // Timeline semaphore of this application, signalled once the graphics work
+  // of a frame has completed. Created exportable so that it can be imported
+  // into the SYCL context as `MSyclWaitSemaphore`, letting SYCL wait until a
+  // buffer is no longer read as a vertex buffer before overwriting it.
   vk::raii::Semaphore MSemaphore = nullptr;
   uint64_t MTimelineValue = 0;
   std::vector<vk::raii::Fence> MInFlightFences;
   uint32_t MCurrentFrame = 0;
+
+  /*
+   * SYCL members
+   */
+
+  // Device of the AdaptiveCpp Vulkan backend on the same physical device as
+  // `MPhysicalDevice`, and the context and queue created on it.
+  std::optional<sycl::device> MSyclDevice;
+  std::optional<sycl::context> MSyclContext;
+  std::optional<sycl::queue> MSyclQueue;
+
+  // Particles of each frame in flight, as exportable SYCL device USM.
+  std::array<Particle *, SMaxFramesInFlight> MParticles{};
+
+  // `MSemaphore` imported into the SYCL context.
+  sycl::vk_interop::imported_semaphore MSyclWaitSemaphore;
+
+  // Timeline semaphore of the SYCL context imported into this application,
+  // alongside the VkSemaphore of the SYCL context it was imported from, which
+  // is used to detect that a different timeline needs to be imported.
+  vk::raii::Semaphore MSyclSemaphore = nullptr;
+  VkSemaphore MSyclSemaphoreSource = VK_NULL_HANDLE;
+
+  // Value `MSemaphore` attains once the graphics work that last read the
+  // particles of a frame in flight has completed, or 0 if they have not been
+  // read yet.
+  std::array<uint64_t, SMaxFramesInFlight> MFrameGraphicsValue{};
 
   double MLastFrameTime = 0.0;
   double MLastTime = 0.0;
@@ -184,24 +236,11 @@ private:
       vk::KHRSynchronization2ExtensionName,
       vk::KHRCreateRenderpass2ExtensionName,
       vk::KHRShaderDrawParametersExtensionName,
+      // Used to import the memory and timeline semaphores that are shared
+      // with the VkDevice AdaptiveCpp has created for the SYCL context.
+      vk::KHRExternalMemoryFdExtensionName,
+      vk::KHRExternalSemaphoreFdExtensionName,
   };
-
-  /*
-   * Static member variables
-   */
-  static const uint32_t SWindowWidth = 800;
-  static const uint32_t SWindowHeight = 600;
-  static const unsigned SMaxFramesInFlight = 2;
-  static const uint64_t SFenceTimeout = 100000000;
-  static constexpr uint32_t SComputeWorkItems = 16;
-  static constexpr uint32_t SComputeWorkGroups = 32;
-  static constexpr bool SEnableValidationLayers =
-#ifdef NDEBUG
-      false;
-#else
-      true;
-#endif
-  static const std::vector<const char *> SValidationLayers;
 };
 
 /*
