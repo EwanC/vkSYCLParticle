@@ -77,12 +77,12 @@ void VkSyclParticle::createShaderStorageBuffers() {
     // Export the device memory backing the allocation, so that a buffer of
     // the VkDevice of this application can be bound to it. The file
     // descriptor returned is consumed by a successful import below.
-    auto exported =
-        sycl::vk_interop::export_memory(MParticles[i], *MSyclContext);
-    if (exported.fd < 0) {
+    auto exported = sycl::AdaptiveCpp_vk_interop::export_memory(MParticles[i],
+                                                                *MSyclContext);
+    if (!exported.handle.is_valid()) {
       throw std::runtime_error("failed to export the SYCL particle memory!");
     }
-    FileDescriptor fd{exported.fd};
+    FileDescriptor fd{exported.handle.fd};
 
     // The buffer is created with the usage this application needs, which is
     // what makes sharing through external memory preferable to sharing the

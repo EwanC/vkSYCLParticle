@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
 
 const std::vector<const char *> VkSyclParticle::SValidationLayers = {
     "VK_LAYER_KHRONOS_validation"};
@@ -221,15 +222,17 @@ void VkSyclParticle::createSyncObjects() {
   MTimelineValue = 0;
   MFrameGraphicsValue.fill(0);
 
-  // Import the semaphore into the SYCL context. The file descriptor is
-  // consumed by a successful import, and closed by `imported_semaphore` if
-  // the import fails.
+  // Import the semaphore into the VkDevice of the SYCL device. The file
+  // descriptor is consumed by a successful import, and has to be closed here
+  // if the import fails.
   const int semaphoreFd = MDevice.getSemaphoreFdKHR(
       {.semaphore = MSemaphore,
        .handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd});
-  MSyclWaitSemaphore =
-      sycl::vk_interop::imported_semaphore(*MSyclContext, semaphoreFd);
+  MSyclWaitSemaphore = sycl::AdaptiveCpp_vk_interop::imported_semaphore(
+      *MSyclDevice,
+      sycl::AdaptiveCpp_vk_interop::external_handle::from_fd(semaphoreFd));
   if (!MSyclWaitSemaphore) {
+    close(semaphoreFd);
     throw std::runtime_error(
         "failed to import the graphics timeline semaphore into the SYCL "
         "context!");

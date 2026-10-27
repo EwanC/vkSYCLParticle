@@ -31,10 +31,11 @@ opaque file descriptors.
 * **Particle buffers** (`src/buffer.cpp`) — the particles of each frame in
   flight are allocated as SYCL device USM with the
   `sycl::property::usm::AdaptiveCpp_exportable` property, exported with
-  `sycl::vk_interop::export_memory`, and the resulting file descriptor imported
-  into the `VkDevice` of this application and bound to a vertex buffer. The
-  buffer created here chooses its own usage flags, so the buffer AdaptiveCpp
-  creates for the same memory does not constrain the renderer.
+  `sycl::AdaptiveCpp_vk_interop::export_memory`, and the resulting file
+  descriptor imported into the `VkDevice` of this application and bound to a
+  vertex buffer. The buffer created here chooses its own usage flags, so the
+  buffer AdaptiveCpp creates for the same memory does not constrain the
+  renderer.
 * **Synchronization** (`src/draw.cpp`, `src/interop.cpp`) — two timeline
   semaphores are shared in opposite directions. The semaphore AdaptiveCpp
   signals on kernel completion is imported here, and waited on by the graphics

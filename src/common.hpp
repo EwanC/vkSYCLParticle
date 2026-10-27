@@ -9,10 +9,10 @@
 
 // Included after the Vulkan headers so that AdaptiveCpp enables its Vulkan
 // backend interop API, which it only does when the Vulkan headers are
-// reachable. `ACPP_GLUE_VK_INTEROP_AVAILABLE` is defined by it in that case.
+// reachable. `ACPP_EXT_VK_INTEROP` is defined by it in that case.
 #include <sycl/sycl.hpp>
 
-#if !defined(ACPP_GLUE_VK_INTEROP_AVAILABLE)
+#if !defined(ACPP_EXT_VK_INTEROP)
 #error "AdaptiveCpp was built without the Vulkan backend, or its Vulkan "\
        "interop API is unavailable. The Vulkan backend is required."
 #endif
@@ -213,8 +213,8 @@ private:
   // Particles of each frame in flight, as exportable SYCL device USM.
   std::array<Particle *, SMaxFramesInFlight> MParticles{};
 
-  // `MSemaphore` imported into the SYCL context.
-  sycl::vk_interop::imported_semaphore MSyclWaitSemaphore;
+  // `MSemaphore` imported into the VkDevice of `MSyclDevice`.
+  sycl::AdaptiveCpp_vk_interop::imported_semaphore MSyclWaitSemaphore;
 
   // Timeline semaphore of the SYCL context imported into this application,
   // alongside the VkSemaphore of the SYCL context it was imported from, which

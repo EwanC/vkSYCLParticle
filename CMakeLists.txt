@@ -45,7 +45,7 @@ target_compile_definitions(vkSyclParticle PRIVATE
     VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
     VULKAN_HPP_NO_STRUCT_CONSTRUCTORS=1
 )
-target_link_libraries(vkSyclParticle Vulkan::Vulkan glfw)
+target_link_libraries(vkSyclParticle PRIVATE Vulkan::Vulkan glfw)
 
 # Compile the SYCL kernels of the target. The Vulkan headers have to be on the
 # include path of every source file, as `common.hpp` includes them before

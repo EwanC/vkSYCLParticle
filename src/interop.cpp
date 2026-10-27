@@ -22,9 +22,8 @@ vk::Semaphore VkSyclParticle::importSyclSemaphore(const sycl::event &event) {
     return *MSyclSemaphore;
   }
 
-  const auto exported =
-      sycl::vk_interop::export_semaphore(event, *MSyclContext);
-  if (exported.fd < 0) {
+  const auto exported = sycl::AdaptiveCpp_vk_interop::export_semaphore(event);
+  if (!exported.handle.is_valid()) {
     throw std::runtime_error("failed to export the SYCL timeline semaphore!");
   }
 
@@ -40,9 +39,9 @@ vk::Semaphore VkSyclParticle::importSyclSemaphore(const sycl::event &event) {
     MDevice.importSemaphoreFdKHR(
         {.semaphore = semaphore,
          .handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd,
-         .fd = exported.fd});
+         .fd = exported.handle.fd});
   } catch (...) {
-    close(exported.fd);
+    close(exported.handle.fd);
     throw;
   }
 

@@ -69,8 +69,8 @@ getShareableSyclDevices(PFN_vkGetInstanceProcAddr getInstanceProcAddr) {
     }
     // Both extensions are optional in AdaptiveCpp, and without them the
     // allocations and timeline semaphores of the device cannot be shared.
-    if (!sycl::vk_interop::has_external_memory_support(device) ||
-        !sycl::vk_interop::has_external_semaphore_support(device)) {
+    if (!sycl::AdaptiveCpp_vk_interop::has_external_memory_support(device) ||
+        !sycl::AdaptiveCpp_vk_interop::has_external_semaphore_support(device)) {
       continue;
     }
     if (auto uuid = getSyclDeviceUUID(device, getInstanceProcAddr)) {

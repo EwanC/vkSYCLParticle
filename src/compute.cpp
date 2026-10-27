@@ -20,8 +20,8 @@ sycl::event VkSyclParticle::updateParticles(float deltaTime) {
     // so that the wait happens on the device rather than on the host.
     const uint64_t waitValue = MFrameGraphicsValue[MCurrentFrame];
     if (waitValue != 0) {
-      cgh.depends_on(sycl::vk_interop::make_event(MSyclWaitSemaphore, waitValue,
-                                                  *MSyclContext));
+      cgh.depends_on(sycl::AdaptiveCpp_vk_interop::make_event(
+          MSyclWaitSemaphore, waitValue));
     }
 
     const sycl::nd_range<1> range{sycl::range<1>{SParticleCount},
