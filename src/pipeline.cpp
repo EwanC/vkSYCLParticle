@@ -2,7 +2,7 @@
 
 #include "common.hpp"
 
-void vkParticle::createGraphicsPipeline() {
+void VkSyclParticle::createGraphicsPipeline() {
   // Setup vertex & fragment shaders
   vk::raii::ShaderModule shaderModule =
       createShaderModule(readFile("slang.spv"), MDevice);

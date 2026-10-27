@@ -50,7 +50,7 @@ struct Particle {
 };
 
 /// @brief Class holding RAII state of the application
-struct vkParticle {
+struct VkSyclParticle {
   /// @brief User code entry-point, called by main.cpp
   void run();
 

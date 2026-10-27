@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-void vkParticle::createSurface() {
+void VkSyclParticle::createSurface() {
   // GLFW only deals with C API
   VkSurfaceKHR vkSurface;
   if (glfwCreateWindowSurface(*MInstance, MWindow, nullptr, &vkSurface) != 0) {
@@ -74,7 +74,7 @@ vk::Extent2D chooseSwapExtent(GLFWwindow *window,
 
 } // end anonymous namespace
 
-void vkParticle::createSwapChain() {
+void VkSyclParticle::createSwapChain() {
   auto surfaceCapabilities =
       MPhysicalDevice.getSurfaceCapabilitiesKHR(*MSurface);
   MSwapChainExtent = chooseSwapExtent(MWindow, surfaceCapabilities);
@@ -100,7 +100,7 @@ void vkParticle::createSwapChain() {
   MSwapChainImages = MSwapChain.getImages();
 }
 
-void vkParticle::createImageViews() {
+void VkSyclParticle::createImageViews() {
   assert(MSwapChainImageViews.empty());
 
   vk::ImageViewCreateInfo imageViewCreateInfo{
@@ -113,12 +113,12 @@ void vkParticle::createImageViews() {
   }
 }
 
-void vkParticle::cleanupSwapChain() {
+void VkSyclParticle::cleanupSwapChain() {
   MSwapChainImageViews.clear();
   MSwapChain = nullptr;
 }
 
-void vkParticle::recreateSwapChain() {
+void VkSyclParticle::recreateSwapChain() {
   int width = 0, height = 0;
   glfwGetFramebufferSize(MWindow, &width, &height);
   while (width == 0 || height == 0) {

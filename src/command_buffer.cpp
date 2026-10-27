@@ -2,7 +2,7 @@
 
 #include "common.hpp"
 
-void vkParticle::createCommandPool() {
+void VkSyclParticle::createCommandPool() {
   // Reset command-buffer bit means that command-buffers can be reset
   // individually, rather than as a group, which is what we want to
   // reset a command-buffer each frame.
@@ -12,7 +12,7 @@ void vkParticle::createCommandPool() {
   MCommandPool = vk::raii::CommandPool(MDevice, poolInfo);
 }
 
-void vkParticle::createGraphicsCommandBuffers() {
+void VkSyclParticle::createGraphicsCommandBuffers() {
   MGraphicsCommandBuffers.clear();
   // Use primary command-buffers, as they are submitted directly to a queue,
   // rather than indirectly from other command-buffers.
@@ -87,7 +87,7 @@ void transferBufferOwnership(vk::raii::CommandBuffer &commandBuffer,
 }
 } // anonymous namespace
 
-void vkParticle::recordGraphicsCommandBuffer(uint32_t imageIndex) {
+void VkSyclParticle::recordGraphicsCommandBuffer(uint32_t imageIndex) {
   MGraphicsCommandBuffers[MCurrentFrame].reset();
 
   // Don't need to set one-time-submit, simultanteous-ues, or render-pass flags

@@ -52,7 +52,7 @@ private:
 };
 } // anonymous namespace
 
-void vkParticle::createShaderStorageBuffers() {
+void VkSyclParticle::createShaderStorageBuffers() {
   assert(MSyclQueue.has_value());
 
   const std::vector<Particle> particles = createParticles(

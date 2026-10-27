@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <unistd.h>
 
-vk::Semaphore vkParticle::importSyclSemaphore(const sycl::event &event) {
+vk::Semaphore VkSyclParticle::importSyclSemaphore(const sycl::event &event) {
   assert(MSyclContext.has_value());
 
   // The timeline semaphore AdaptiveCpp signals when this event completes.

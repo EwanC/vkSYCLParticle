@@ -2,7 +2,7 @@
 
 #include "common.hpp"
 
-sycl::event vkParticle::updateParticles(float deltaTime) {
+sycl::event VkSyclParticle::updateParticles(float deltaTime) {
   assert(MSyclQueue.has_value());
 
   // Particles of the previous frame are read, and the particles of the

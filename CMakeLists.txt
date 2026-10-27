@@ -1,7 +1,7 @@
 # Copyright (c) 2025-2026 Ewan Crawford
 
 cmake_minimum_required (VERSION 3.20)
-project(VkParticle)
+project(VkSyclParticle)
 
 # Find glm and glfw3 dependencies
 find_package (glfw3 REQUIRED)
@@ -39,18 +39,18 @@ endfunction()
 
 # Create executable from source files
 add_subdirectory(src)
-add_executable(vkParticle ${VK_PARTICLE_SOURCES})
-set_target_properties(vkParticle PROPERTIES CXX_STANDARD 20)
-target_compile_definitions(vkParticle PRIVATE
+add_executable(vkSyclParticle ${VK_PARTICLE_SOURCES})
+set_target_properties(vkSyclParticle PROPERTIES CXX_STANDARD 20)
+target_compile_definitions(vkSyclParticle PRIVATE
     VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
     VULKAN_HPP_NO_STRUCT_CONSTRUCTORS=1
 )
-target_link_libraries(vkParticle Vulkan::Vulkan glfw)
+target_link_libraries(vkSyclParticle Vulkan::Vulkan glfw)
 
 # Compile the SYCL kernels of the target. The Vulkan headers have to be on the
 # include path of every source file, as `common.hpp` includes them before
 # <sycl/sycl.hpp> to enable the Vulkan backend interop API of AdaptiveCpp.
-add_sycl_to_target(TARGET vkParticle SOURCES ${VK_PARTICLE_SOURCES})
+add_sycl_to_target(TARGET vkSyclParticle SOURCES ${VK_PARTICLE_SOURCES})
 
 # Add shader dependencies
-add_slang_shader_depedency(vkParticle)
+add_slang_shader_depedency(vkSyclParticle)

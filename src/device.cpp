@@ -81,7 +81,7 @@ getShareableSyclDevices(PFN_vkGetInstanceProcAddr getInstanceProcAddr) {
 }
 } // anonymous namespace
 
-void vkParticle::pickPhysicalDevice() {
+void VkSyclParticle::pickPhysicalDevice() {
   // AdaptiveCpp creates its own VkInstance and VkDevice, which this
   // application cannot influence, so rather than sharing them the two drive
   // separate logical devices and share memory and synchronization through
@@ -168,7 +168,7 @@ void vkParticle::pickPhysicalDevice() {
   MPhysicalDevice = *devIter;
 }
 
-void vkParticle::createSyclQueue() {
+void VkSyclParticle::createSyclQueue() {
   assert(MSyclDevice.has_value());
   // A context of a single device, as required to unambiguously map it onto the
   // VkDevice AdaptiveCpp has created. An in-order queue is used so that the
@@ -179,7 +179,7 @@ void vkParticle::createSyclQueue() {
                      sycl::property_list{sycl::property::queue::in_order{}});
 }
 
-void vkParticle::createLogicalDevice() {
+void VkSyclParticle::createLogicalDevice() {
   std::vector<vk::QueueFamilyProperties> queueFamilyProperties =
       MPhysicalDevice.getQueueFamilyProperties();
 

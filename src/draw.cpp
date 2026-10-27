@@ -3,7 +3,7 @@
 #include "common.hpp"
 #include <stdexcept>
 
-void vkParticle::drawFrame() {
+void VkSyclParticle::drawFrame() {
   // The image at `imageIndex` will be available when the fence for the
   // current frame is signalled
   auto [result, imageIndex] = MSwapChain.acquireNextImage(

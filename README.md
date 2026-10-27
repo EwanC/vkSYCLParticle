@@ -1,4 +1,4 @@
-# vkParticle
+# VK-SYCL Particle
 
 Vulkan GPU particle simulation where the rendering is done with Vulkan
 graphics, and the simulation with a SYCL kernel sharing data and
@@ -65,7 +65,7 @@ layer is enabled in Debug builds:
 $ mkdir build && cd build
 $ cmake ../ -GNinja -DCMAKE_CXX_COMPILER=acpp -DACPP_TARGETS=generic
 $ ninja
-$ ACPP_VISIBILITY_MASK=vk ./vkParticle
+$ ACPP_VISIBILITY_MASK=vk ./vkSyclParticle
 ```
 
 `ACPP_VISIBILITY_MASK=vk` restricts AdaptiveCpp to its Vulkan backend. Without

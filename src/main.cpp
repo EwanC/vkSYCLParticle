@@ -8,7 +8,7 @@
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 int main() {
-  vkParticle app;
+  VkSyclParticle app;
 
   try {
     app.run();

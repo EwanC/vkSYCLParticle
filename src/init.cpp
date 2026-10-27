@@ -7,38 +7,38 @@
 #include <stdexcept>
 #include <string>
 
-const std::vector<const char *> vkParticle::SValidationLayers = {
+const std::vector<const char *> VkSyclParticle::SValidationLayers = {
     "VK_LAYER_KHRONOS_validation"};
 
 namespace {
 // Callback invoked when window is resized, which sets a boolean member in an
-// instance of the vkParticle class.
+// instance of the VkSyclParticle class.
 void framebufferResizeCallback(GLFWwindow *window, int width, int height) {
-  auto app = reinterpret_cast<vkParticle *>(glfwGetWindowUserPointer(window));
+  auto app = reinterpret_cast<VkSyclParticle *>(glfwGetWindowUserPointer(window));
   app->MFramebufferResized = true;
 }
 } // anonymous namespace
 
-void vkParticle::run() {
+void VkSyclParticle::run() {
   initWindow();
   initVulkan();
   mainLoop();
   cleanup();
 }
 
-void vkParticle::initWindow() {
+void VkSyclParticle::initWindow() {
   glfwInit();
 
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-  MWindow = glfwCreateWindow(SWindowWidth, SWindowHeight, "vkParticle", nullptr,
-                             nullptr);
+  MWindow = glfwCreateWindow(SWindowWidth, SWindowHeight, "VK-SYCL Particle",
+                             nullptr, nullptr);
   glfwSetWindowUserPointer(MWindow, this);
   glfwSetFramebufferSizeCallback(MWindow, framebufferResizeCallback);
 }
 
-void vkParticle::initVulkan() {
+void VkSyclParticle::initVulkan() {
   createInstance();
   setupDebugMessenger();
   createSurface();
@@ -57,7 +57,7 @@ void vkParticle::initVulkan() {
   createGraphicsCommandBuffers();
 }
 
-void vkParticle::cleanup() {
+void VkSyclParticle::cleanup() {
   // Objects shared between this application and the SYCL context have to be
   // destroyed in order, as the RAII members below are otherwise torn down
   // after the SYCL context, which still refers to them.
@@ -104,9 +104,9 @@ getGLFWRequiredExtensions(bool enableValidationLayers) {
 }
 } // namespace
 
-void vkParticle::createInstance() {
+void VkSyclParticle::createInstance() {
   constexpr vk::ApplicationInfo appInfo{
-      .pApplicationName = "vkParticle",
+      .pApplicationName = "VK-SYCL Particle",
       .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
       .pEngineName = "No Engine",
       .engineVersion = VK_MAKE_VERSION(1, 0, 0),
@@ -169,7 +169,7 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
   return vk::False;
 }
 
-void vkParticle::setupDebugMessenger() {
+void VkSyclParticle::setupDebugMessenger() {
   if (!SEnableValidationLayers)
     return;
 
@@ -190,7 +190,7 @@ void vkParticle::setupDebugMessenger() {
       MInstance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
 }
 
-void vkParticle::mainLoop() {
+void VkSyclParticle::mainLoop() {
   // Exit on escape key press or GUI window close
   while (glfwGetKey(MWindow, GLFW_KEY_ESCAPE) != GLFW_PRESS &&
          !glfwWindowShouldClose(MWindow)) {
@@ -205,7 +205,7 @@ void vkParticle::mainLoop() {
   MDevice.waitIdle();
 }
 
-void vkParticle::createSyncObjects() {
+void VkSyclParticle::createSyncObjects() {
   MInFlightFences.clear();
 
   // Create a timeline semaphore with counter initialized to zero, exportable
